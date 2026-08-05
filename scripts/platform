@@ -1,0 +1,147 @@
+#!/bin/bash
+
+OPERATIONS="$HOME/Projects/Infrastructure/operations-platform"
+MONITORING="$HOME/Projects/Infrastructure/monitoring-platform"
+
+case "$1" in
+
+status)
+    echo
+    echo "========== Docker =========="
+    docker ps
+    ;;
+
+operations)
+
+    case "$2" in
+
+        start)
+            cd "$OPERATIONS"
+            docker compose up -d
+            ;;
+
+        stop)
+            cd "$OPERATIONS"
+            docker compose down
+            ;;
+
+        restart)
+            cd "$OPERATIONS"
+            docker compose restart
+            ;;
+
+        update)
+            cd "$OPERATIONS"
+            ./update.sh
+            ;;
+
+        logs)
+            docker logs "$3" --tail=100
+            ;;
+
+        *)
+            echo "Usage:"
+            echo "platform operations {start|stop|restart|update|logs}"
+            ;;
+    esac
+    ;;
+
+monitoring)
+
+    case "$2" in
+
+        start)
+            cd "$MONITORING"
+            docker compose up -d
+            ;;
+
+        stop)
+            cd "$MONITORING"
+            docker compose down
+            ;;
+
+        restart)
+            cd "$MONITORING"
+            docker compose restart
+            ;;
+
+        update)
+            cd "$MONITORING"
+            ./update.sh
+            ;;
+
+        *)
+            echo "Usage:"
+            echo "platform monitoring {start|stop|restart|update}"
+            ;;
+    esac
+    ;;
+
+doctor)
+
+    echo
+    echo "========================================="
+    echo "AI Engineering Workstation"
+    echo "========================================="
+    echo
+
+    echo "Docker"
+
+    docker info >/dev/null 2>&1 \
+    && echo "✓ Docker Running" \
+    || echo "✗ Docker Stopped"
+
+    echo
+
+    echo "Containers"
+
+    source "$HOME/Projects/Workstation/scripts/doctor.sh"
+
+    check_container traefik
+    check_container homepage
+    check_container grafana
+    check_container prometheus
+    check_container uptime-kuma
+
+    check_container portainer
+
+    check_container n8n
+    check_container flowise
+    check_container minio
+
+    check_container postgres
+    check_container redis
+    check_container mongodb
+    check_container mysql
+
+    check_container open-webui
+    check_container chromadb
+    check_container qdrant
+
+    ;;
+
+*)
+
+echo
+echo "Usage"
+
+echo
+echo "platform status"
+echo "platform doctor"
+
+echo
+echo "platform operations start"
+echo "platform operations stop"
+echo "platform operations restart"
+echo "platform operations update"
+echo "platform operations logs homepage"
+
+echo
+echo "platform monitoring start"
+echo "platform monitoring stop"
+echo "platform monitoring restart"
+echo "platform monitoring update"
+
+;;
+
+esac

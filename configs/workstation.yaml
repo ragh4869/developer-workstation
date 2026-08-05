@@ -1,0 +1,53 @@
+workstation:
+
+  owner: Raghav
+
+  location: Local
+
+  os: Ubuntu WSL2
+
+  docker: true
+
+  ai:
+
+    ollama: true
+
+    open-webui: true
+
+    qdrant: true
+
+    chromadb: true
+
+  automation:
+
+    n8n: true
+
+    flowise: true
+
+    minio: true
+
+  databases:
+
+    postgres: true
+
+    mysql: true
+
+    mongodb: true
+
+    redis: true
+
+  monitoring:
+
+    grafana: true
+
+    prometheus: true
+
+    traefik: true
+
+    homepage: true
+
+    uptime-kuma: true
+
+  backups:
+
+    enabled: true
