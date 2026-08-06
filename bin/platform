@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+SCRIPT="$(readlink -f "$0")"
+ROOT="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
+source "$ROOT/lib/common.sh"
+
+case "$1" in
+
+start)
+    "$HOME/Projects/Workstation/commands/start.sh" "$2"
+;;
+
+stop)
+    "$HOME/Projects/Workstation/commands/stop.sh" "$2"
+;;
+
+restart)
+    "$HOME/Projects/Workstation/commands/restart.sh" "$2"
+;;
+
+update)
+    "$HOME/Projects/Workstation/commands/update.sh" "$2"
+;;
+
+status)
+    "$HOME/Projects/Workstation/commands/status.sh" "$2"
+;;
+
+logs)
+    "$HOME/Projects/Workstation/commands/logs.sh" "$2"
+;;
+
+list)
+
+exec "$HOME/Projects/Workstation/commands/list.sh"
+
+;;
+
+health)
+    "$HOME/Projects/Workstation/commands/health.sh" "$2"
+;;
+
+doctor)
+    "$HOME/Projects/Workstation/commands/doctor.sh"
+;;
+
+backup)
+
+shift
+
+exec "$HOME/Projects/Workstation/commands/backup.sh" "$@"
+
+;;
+
+restore)
+
+shift
+
+exec "$HOME/Projects/Workstation/commands/restore.sh" "$@"
+
+;;
+
+version)
+    "$HOME/Projects/Workstation/commands/version.sh"
+;;
+
+info)
+
+shift
+
+exec "$HOME/Projects/Workstation/commands/info.sh" "$@"
+
+;;
+
+help)
+    "$HOME/Projects/Workstation/commands/help.sh"
+;;
+
+esac
