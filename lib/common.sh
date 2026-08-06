@@ -187,6 +187,8 @@ get_compose_filename() {
         echo compose.yaml
     else
         print_error "No compose file found in $dir."
+        ls -la "$dir"
+
         exit 1
     fi
 }
@@ -195,7 +197,7 @@ get_compose_file() {
 
     local platform="$1"
 
-    echo "$(get_platform_dir "$platform")/$(get_compose_filename)"
+    echo "$(get_platform_dir "$platform")/$(get_compose_filename "$platform")"
 }
 
 require_docker() {
@@ -264,7 +266,10 @@ get_restore_excludes() {
 
     local platform="$1"
 
-    [[ ! -f "$RESTORE_EXCLUDES_CONFIG" ]] && return
+    [[ ! -f "$RESTORE_EXCLUDES_CONFIG" ]] && {
+        echo ""
+        return
+    }
 
     grep "^${platform}=" "$RESTORE_EXCLUDES_CONFIG" \
         | cut -d= -f2- \

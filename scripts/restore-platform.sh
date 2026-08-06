@@ -84,6 +84,10 @@ cp "$BACKUP_PATH/.env" "$SOURCE/" 2>/dev/null || true
 # Restore folders
 ########################################
 
+RESTORE_EXCLUDES="$(get_restore_excludes "$PLATFORM")"
+
+IFS=',' read -ra EXCLUDES <<< "$RESTORE_EXCLUDES"
+
 for DIR in homepage prometheus grafana traefik uptime-kuma
 do
 
