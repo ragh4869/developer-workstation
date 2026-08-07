@@ -14,6 +14,8 @@ echo "           AI Engineering Workstation            "
 echo "================================================="
 echo
 
+print_header "AI Engineering Workstation"
+
 echo "System"
 
 echo
@@ -29,9 +31,9 @@ require_docker
 
 if docker_running
 then
-    success "Docker Running"
+    print_success "Docker Running"
 else
-    error "Docker Not Running"
+    print_error "Docker Not Running"
 fi
 
 echo

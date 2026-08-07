@@ -30,7 +30,7 @@ echo
 # Copy compose configuration
 ############################################################
 
-print_info "Copying compose configuration..."
+print_step "Copying compose configuration..."
 
 cp "$COMPOSE_FILE" "$DEST/" 2>/dev/null || true
 cp "$SOURCE/.env" "$DEST/" 2>/dev/null || true
@@ -43,7 +43,7 @@ for DIR in homepage prometheus grafana traefik uptime-kuma
 do
     [[ ! -d "$SOURCE/$DIR" ]] && continue
 
-    print_info "Copying $DIR..."
+    print_step "Copying $DIR..."
 
     if [[ "$DIR" == "homepage" ]]; then
 
@@ -66,7 +66,7 @@ done
 # Backup Docker volumes
 ############################################################
 
-print_info "Discovering Docker volumes..."
+print_step "Discovering Docker volumes..."
 
 VOLUMES="$(discover_volumes "$COMPOSE_FILE")"
 
@@ -80,7 +80,7 @@ do
     if docker volume inspect "$REAL_VOLUME" >/dev/null 2>&1
     then
 
-        print_info "Backing up $REAL_VOLUME..."
+        print_step "Backing up $REAL_VOLUME..."
 
         "$SCRIPTS_DIR/backup-volume.sh" \
             "$REAL_VOLUME" \

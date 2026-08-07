@@ -46,7 +46,7 @@ wait_for_platform() {
     local PLATFORM="$1"
 
     echo
-    echo "Waiting for containers..."
+    print_info "Waiting for containers..."
 
     sleep 10
 

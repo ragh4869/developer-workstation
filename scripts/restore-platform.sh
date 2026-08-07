@@ -16,7 +16,7 @@ require_docker
 SOURCE="$(get_platform_dir "$PLATFORM")"
 
 if [[ -z "$BACKUP_PATH" ]]; then
-    BACKUP_PATH="$(latest_backup "$PLATFORM")"
+    BACKUP_PATH="$(select_backup "$PLATFORM")"
 fi
 
 if [[ ! -d "$BACKUP_PATH" ]]; then
@@ -48,11 +48,34 @@ print_success "Backup is valid."
 
 echo
 
-cat "$BACKUP_PATH/metadata.json"
+print_header "Backup Information"
+
+jq -r '
+[
+    ["Platform", .platform],
+    ["Created", .created],
+    ["Hostname", .hostname],
+    ["User", .user],
+    ["Docker", .docker_version],
+    ["Compose", .compose_version],
+    ["Volumes", (.volume_count|tostring)]
+]
+|
+.[] |
+@tsv
+' "$BACKUP_PATH/metadata.json" |
+while IFS=$'\t' read -r key value
+do
+    printf "%-12s : %s\n" "$key" "$value"
+done
+
+SIZE=$(du -sh "$BACKUP_PATH" | cut -f1)
+printf "%-12s : %s\n" "Size" "$SIZE"
 
 echo
+print_warning "This will overwrite the current platform."
 
-read -rp "Restore this backup? (y/N): " CONFIRM
+read -rp "Continue and restore this backup? (y/N): " CONFIRM
 
 [[ "$CONFIRM" =~ ^[Yy]$ ]] || {
     print_warning "Restore cancelled."
@@ -63,7 +86,7 @@ read -rp "Restore this backup? (y/N): " CONFIRM
 # Stop platform
 ########################################
 
-print_info "Stopping platform..."
+print_step "Stopping platform..."
 
 (
     platform_cd "$PLATFORM"
@@ -75,7 +98,7 @@ print_info "Stopping platform..."
 # Restore compose configuration
 ########################################
 
-print_info "Restoring compose configuration..."
+print_step "Restoring compose configuration..."
 
 cp "$BACKUP_PATH"/compose.* "$SOURCE/" 2>/dev/null || true
 cp "$BACKUP_PATH/.env" "$SOURCE/" 2>/dev/null || true
@@ -93,7 +116,7 @@ do
 
     [[ ! -d "$BACKUP_PATH/$DIR" ]] && continue
 
-    print_info "Restoring $DIR..."
+    print_step "Restoring $DIR..."
 
     mkdir -p "$SOURCE/$DIR"
 
@@ -115,7 +138,7 @@ done
 # Restore Docker volumes
 ########################################
 
-print_info "Restoring Docker volumes..."
+print_step "Restoring Docker volumes..."
 
 COMPOSE_FILE="$(get_compose_file "$PLATFORM")"
 
@@ -130,7 +153,7 @@ do
 
     [[ ! -f "$BACKUP_PATH/${REAL_VOLUME}.tar.gz" ]] && continue
 
-    print_info "Restoring $REAL_VOLUME..."
+    print_step "Restoring $REAL_VOLUME..."
 
     "$SCRIPTS_DIR/restore-volume.sh" \
         "$REAL_VOLUME" \
@@ -142,7 +165,7 @@ done
 # Start platform
 ########################################
 
-print_info "Starting platform..."
+print_step "Starting platform..."
 
 (
     platform_cd "$PLATFORM"
@@ -154,7 +177,7 @@ print_info "Starting platform..."
 # Health Check
 ########################################
 
-print_info "Running health check..."
+print_step "Running health check..."
 
 platform health "$PLATFORM"
 

@@ -7,8 +7,6 @@ PLATFORM="$1"
 
 prepare_platform "$PLATFORM"
 
-print_header "Backing Up $PLATFORM"
-
 if "$SCRIPT_DIR/../scripts/backup-platform.sh" "$PLATFORM"; then
     print_success "$PLATFORM backup completed successfully."
 else

@@ -23,42 +23,62 @@ source "$COMMON_LIB_DIR/system.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/backup.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/restore.sh" 2>/dev/null
 
+
 ####################################
-#            Colours               #
+#             Colors               #
 ####################################
 
+RESET="\033[0m"
+BOLD="\033[1m"
+
+BLACK="\033[0;30m"
 RED="\033[0;31m"
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 BLUE="\033[0;34m"
-NC="\033[0m"
+MAGENTA="\033[0;35m"
+CYAN="\033[0;36m"
+WHITE="\033[1;37m"
+GRAY="\033[0;90m"
 
-####################################
-#            Printing              #
-####################################
+
+###########################################
+#             Output Helpers              #
+###########################################
 
 print_header() {
+    echo
+    printf "${BOLD}${WHITE}%0.s=" {1..70}
+    echo -e "${RESET}"
+    echo -e "${BOLD}${WHITE}$1${RESET}"
+    printf "${BOLD}${WHITE}%0.s=" {1..70}
+    echo -e "${RESET}"
+    echo
+}
 
-    echo
-    echo "================================================="
-    echo "$1"
-    echo "================================================="
-    echo
+print_divider() {
+    printf "${GRAY}%0.s─" {1..70}
+    echo -e "${RESET}"
+}
+
+print_step() {
+    echo -e "${BLUE}▶${RESET} $1"
+}
+
+print_info() {
+    echo -e "${CYAN}ℹ${RESET} $1"
 }
 
 print_success() {
-
-    echo -e "${GREEN}✓${NC} $1"
-}
-
-print_error() {
-
-    echo -e "${RED}✗${NC} $1"
+    echo -e "${GREEN}✔${RESET} $1"
 }
 
 print_warning() {
+    echo -e "${YELLOW}⚠${RESET} $1"
+}
 
-    echo -e "${YELLOW}!${NC} $1"
+print_error() {
+    echo -e "${RED}✖${RESET} $1"
 }
 
 print_field() {
@@ -66,9 +86,6 @@ print_field() {
     printf "%-13s : %s\n" "$1" "$2"
 }
 
-print_info() {
-    echo -e "${BLUE}{NC} $1"
-}
 
 ####################################
 #           Timestamp              #
@@ -81,7 +98,7 @@ timestamp() {
 
 
 ############################################################
-# Platform Helpers
+#                      Platform Helpers                    #
 ############################################################
 
 platform_exists() {
@@ -165,7 +182,7 @@ prepare_platform() {
 
 
 ############################################################
-# Docker Helpers
+#                     Docker Helpers                       #
 ############################################################
 
 get_compose_filename() {
@@ -242,10 +259,194 @@ network_count() {
         --networks | wc -l | tr -d ' '
 }
 
+###############################################################################
+#                           Backup & Restore Helpers                          #
+###############################################################################
+
+select_backup() {
+
+    local platform="$1"
+    local backup_root
+
+    backup_root="$(platform_backup_directory "$platform")"
+
+    [[ -d "$backup_root" ]] || {
+        print_error "No backups found."
+        exit 1
+    }
+
+    mapfile -t BACKUPS < <(
+        find "$backup_root" \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d |
+        sort -r
+    )
+
+    [[ ${#BACKUPS[@]} -gt 0 ]] || {
+        print_error "No backups available."
+        exit 1
+    }
+
+    while true
+    do
+        echo >&2
+        print_header "Restore Options" >&2
+
+        echo "1) Latest Backup (Recommended)" >&2
+        echo "2) Choose Backup" >&2
+        echo "3) Cancel" >&2
+        echo >&2
+
+        read -rp "Selection [1]: " OPTION
+        OPTION=${OPTION:-1}
+
+        case "$OPTION" in
+
+            1)
+
+                if confirm_backup "${BACKUPS[0]}"
+                then
+                    echo "${BACKUPS[0]}"
+                    return
+                fi
+
+            ;;
+
+            2)
+
+                local selected
+
+                selected=$(choose_backup "${BACKUPS[@]}")
+                if confirm_backup "$selected"
+                then
+                    echo "$selected"
+                    return
+                fi
+            ;;
+
+            3)
+
+                print_warning "Restore cancelled."
+
+                exit 0
+                ;;
+
+            *)
+
+                print_error "Invalid selection."
+
+                ;;
+
+        esac
+
+    done
+
+}
+
+confirm_backup() {
+
+    local backup="$1"
+
+    get_backup_metadata "$backup"
+
+    {
+        echo
+        print_header "Selected Backup"
+
+        printf "%-12s : %s\n" "Name" "$BACKUP_NAME"
+        printf "%-12s : %s\n" "Host" "$BACKUP_HOST"
+        printf "%-12s : %s\n" "Platform" "$BACKUP_PLATFORM"
+        printf "%-12s : %s\n" "Volumes" "$BACKUP_VOLUMES"
+        printf "%-12s : %s\n" "Size" "$BACKUP_SIZE"
+
+        echo
+    } >&2
+
+    read -rp "Continue with this backup? (Y/n): " ANSWER
+
+    ANSWER=${ANSWER:-Y}
+
+    [[ "$ANSWER" =~ ^[Yy]$ ]]
+}
+
+choose_backup() {
+
+    local BACKUPS=("$@")
+    local choice
+
+    echo >&2
+    print_header "Available Backups" >&2
+
+    local i=1
+
+    for BACKUP in "${BACKUPS[@]}"
+    do
+
+        get_backup_metadata "$BACKUP"
+
+        printf "%2d) %-22s (Host: %s) (Volumes: %s) (%s)\n" \
+            "$i" \
+            "$BACKUP_NAME" \
+            "$BACKUP_HOST" \
+            "$BACKUP_VOLUMES" \
+            "$BACKUP_SIZE" >&2
+
+        ((i++))
+
+    done
+
+    echo >&2
+
+    while true
+    do
+
+        read -rp "Select backup [1-${#BACKUPS[@]}]: " choice
+
+        [[ "$choice" =~ ^[0-9]+$ ]] || continue
+
+        if (( choice >= 1 && choice <= ${#BACKUPS[@]} ))
+        then
+            echo "${BACKUPS[$((choice-1))]}"
+            return
+        fi
+
+    done
+
+}
+
+
+get_backup_metadata() {
+
+    local backup="$1"
+
+    BACKUP_NAME=$(basename "$backup")
+    BACKUP_SIZE=$(du -sh "$backup" | cut -f1)
+
+    BACKUP_HOST="Unknown"
+    BACKUP_PLATFORM="Unknown"
+    BACKUP_VOLUMES="-"
+
+    if [[ -f "$backup/metadata.json" ]]; then
+
+        BACKUP_HOST=$(jq -r '.hostname // "Unknown"' "$backup/metadata.json")
+        BACKUP_PLATFORM=$(jq -r '.platform // "Unknown"' "$backup/metadata.json")
+        BACKUP_VOLUMES=$(jq -r '.volume_count // "-"' "$backup/metadata.json")
+
+    fi
+}
+
+
+
 backup_directory() {
 
     echo "$BACKUP_DIR"
 
+}
+
+platform_backup_directory() {
+    local platform="$1"
+    echo "$BACKUP_DIR/$platform"
 }
 
 backup_destination() {
