@@ -7,27 +7,27 @@ source "$ROOT/lib/common.sh"
 case "$1" in
 
 start)
-    "$HOME/Projects/Workstation/commands/start.sh" "$2"
+    "$HOME/Projects/Workstation/commands/start.sh" "${@:2}"
 ;;
 
 stop)
-    "$HOME/Projects/Workstation/commands/stop.sh" "$2"
+    "$HOME/Projects/Workstation/commands/stop.sh" "${@:2}"
 ;;
 
 restart)
-    "$HOME/Projects/Workstation/commands/restart.sh" "$2"
+    "$HOME/Projects/Workstation/commands/restart.sh" "${@:2}"
 ;;
 
 update)
-    "$HOME/Projects/Workstation/commands/update.sh" "$2"
+    "$HOME/Projects/Workstation/commands/update.sh" "${@:2}"
 ;;
 
 status)
-    "$HOME/Projects/Workstation/commands/status.sh" "$2"
+    "$HOME/Projects/Workstation/commands/status.sh" "${@:2}"
 ;;
 
 logs)
-    "$HOME/Projects/Workstation/commands/logs.sh" "$2"
+    "$HOME/Projects/Workstation/commands/logs.sh" "${@:2}"
 ;;
 
 list)
@@ -37,7 +37,7 @@ exec "$HOME/Projects/Workstation/commands/list.sh"
 ;;
 
 health)
-    "$HOME/Projects/Workstation/commands/health.sh" "$2"
+    "$HOME/Projects/Workstation/commands/health.sh" "${@:2}"
 ;;
 
 doctor)

@@ -3,10 +3,23 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
 
+############################################################
+# Platform Status
+############################################################
+
 PLATFORM="$1"
 
-prepare_platform "$PLATFORM"
+require_platform "$PLATFORM"
 
-print_header "$PLATFORM Platform Status"
+print_header "Platform Status"
 
-docker compose ps --format table
+print_field "Platform" "$PLATFORM"
+print_field "Source" "$(get_platform_dir "$PLATFORM")"
+
+echo
+
+status_summary "$PLATFORM"
+
+echo
+
+status_containers "$PLATFORM"

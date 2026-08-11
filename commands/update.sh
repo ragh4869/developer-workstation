@@ -1,31 +1,175 @@
 #!/usr/bin/env bash
 
-PLATFORM=$1
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../lib/common.sh"
 
-case "$PLATFORM" in
+set -e
 
-operations)
+PLATFORM="$1"
+shift
 
-cd ~/Projects/Infrastructure/operations-platform
+SERVICE=""
+AUTO_BACKUP=true
 
-~/Projects/Workstation/scripts/update-platform.sh
-;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
 
-monitoring)
+        --no-backup)
+            AUTO_BACKUP=false
+            shift
+            ;;
 
-cd ~/Projects/Infrastructure/monitoring-platform
+        -*)
+            print_error "Unknown option: $1"
+            exit 1
+            ;;
 
-docker compose pull
+        *)
+            if [[ -z "$SERVICE" ]]; then
+                SERVICE="$1"
+            else
+                print_error "Unexpected argument: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
 
-docker compose up -d
-;;
+prepare_platform "$PLATFORM"
 
-*)
+print_header "Platform Update"
 
-echo "Usage:"
 echo
-echo "platform update operations"
-echo "platform update monitoring"
-;;
+echo "Platform : $PLATFORM"
 
-esac
+if [[ -n "$SERVICE" ]]; then
+    echo "Service  : $SERVICE"
+else
+    echo "Service  : All"
+fi
+
+echo
+
+if [[ -n "$SERVICE" ]]; then
+
+    if ! platform_has_service "$PLATFORM" "$SERVICE"; then
+
+        print_error "Unknown service: $SERVICE"
+        echo
+
+        print_info "Available Services"
+
+        docker compose \
+            -f "$(get_compose_file "$PLATFORM")" \
+            config --services \
+        | nl -w1 -s") "
+
+        exit 1
+    fi
+fi
+
+if $AUTO_BACKUP; then
+
+    print_info "Creating backup before update..."
+
+    BACKUP_NAME="$("$SCRIPTS_DIR/backup-platform.sh" "$PLATFORM")"
+
+    print_success "Backup completed."
+
+    if [[ -n "$BACKUP_NAME" ]]; then
+        echo "Backup : $(basename "$BACKUP_NAME")"
+    fi
+
+    echo
+fi
+
+read -rp "Update images? (Y/n): " CONFIRM
+
+[[ "$CONFIRM" =~ ^[Nn]$ ]] && exit 0
+
+echo
+
+print_info "Checking for image updates..."
+
+###############################################################################
+# Snapshot images BEFORE pull
+###############################################################################
+
+BEFORE_IMAGES="$(
+    platform_cd "$PLATFORM" || exit 1
+    platform_snapshot_images
+)"
+
+###############################################################################
+# Pull latest images
+###############################################################################
+
+PULL_OUTPUT="$(platform_pull_images_capture "$PLATFORM")" || {
+    print_error "Failed to pull platform images."
+    return 1
+}
+
+###############################################################################
+# Snapshot images AFTER pull
+###############################################################################
+
+AFTER_IMAGES="$(
+    platform_cd "$PLATFORM" || exit 1
+    platform_snapshot_images
+)"
+
+###############################################################################
+# Detect changed / unchanged services
+###############################################################################
+
+UPDATED_SERVICES=()
+UNCHANGED_SERVICES=()
+
+while IFS= read -r svc
+do
+    [[ -n "$svc" ]] && UPDATED_SERVICES+=("$svc")
+done < <(
+    platform_cd "$PLATFORM" || exit 1
+    platform_changed_services "$BEFORE_IMAGES" "$AFTER_IMAGES"
+)
+
+while IFS= read -r svc
+do
+    [[ -n "$svc" ]] && UNCHANGED_SERVICES+=("$svc")
+done < <(
+    platform_cd "$PLATFORM" || exit 1
+    platform_unchanged_services "$BEFORE_IMAGES" "$AFTER_IMAGES"
+)
+
+for svc in "${UPDATED_SERVICES[@]}"
+do
+    printf " "
+    printf "✔ %-18s Updated\n" "$svc"
+done
+
+for svc in "${UNCHANGED_SERVICES[@]}"
+do
+    printf " "
+    printf "ℹ  %-18s Already up-to-date\n" "$svc"
+done
+
+echo
+
+print_info "Updating containers..."
+
+if [[ -n "$SERVICE" ]]; then
+    platform_update_service "$PLATFORM" "$SERVICE"
+else
+    platform_update_all "$PLATFORM"
+fi
+
+echo
+
+print_info "Running health check..."
+
+platform_health "$PLATFORM"
+
+echo
+echo
+print_success "Update completed successfully."

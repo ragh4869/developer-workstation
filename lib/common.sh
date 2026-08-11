@@ -4,9 +4,17 @@
 #       Load configuration         #
 ####################################
 
-readonly COMMON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    COMMON_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+elif [[ -n "${ZSH_VERSION:-}" ]]; then
+    COMMON_LIB_DIR="$(cd -- "$(dirname -- "${(%):-%x}")" && pwd)"
+else
+    COMMON_LIB_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+fi
+
+readonly COMMON_LIB_DIR
 readonly LIB_ROOT="$COMMON_LIB_DIR"
-readonly WORKSTATION_ROOT="$(cd "$COMMON_LIB_DIR/.." && pwd)"
+readonly WORKSTATION_ROOT="$(cd -- "$COMMON_LIB_DIR/.." && pwd)"
 
 readonly CONFIG_DIR="$WORKSTATION_ROOT/config"
 readonly RESTORE_EXCLUDES_CONFIG="$CONFIG_DIR/restore-excludes.conf"
@@ -17,12 +25,16 @@ readonly INFRASTRUCTURE_ROOT="$HOME/Projects/Infrastructure"
 
 source "$COMMON_LIB_DIR/config.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/colors.sh" 2>/dev/null
+source "$COMMON_LIB_DIR/ui.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/output.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/docker.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/system.sh" 2>/dev/null
+source "$COMMON_LIB_DIR/status.sh" 2>/dev/null
+source "$COMMON_LIB_DIR/info.sh" 2>/dev/null
+source "$COMMON_LIB_DIR/logs.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/backup.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/restore.sh" 2>/dev/null
-
+source "$COMMON_LIB_DIR/update.sh" 2>/dev/null
 
 ####################################
 #             Colors               #
@@ -40,52 +52,6 @@ MAGENTA="\033[0;35m"
 CYAN="\033[0;36m"
 WHITE="\033[1;37m"
 GRAY="\033[0;90m"
-
-
-###########################################
-#             Output Helpers              #
-###########################################
-
-print_header() {
-    echo
-    printf "${BOLD}${WHITE}%0.s=" {1..70}
-    echo -e "${RESET}"
-    echo -e "${BOLD}${WHITE}$1${RESET}"
-    printf "${BOLD}${WHITE}%0.s=" {1..70}
-    echo -e "${RESET}"
-    echo
-}
-
-print_divider() {
-    printf "${GRAY}%0.s─" {1..70}
-    echo -e "${RESET}"
-}
-
-print_step() {
-    echo -e "${BLUE}▶${RESET} $1"
-}
-
-print_info() {
-    echo -e "${CYAN}ℹ${RESET} $1"
-}
-
-print_success() {
-    echo -e "${GREEN}✔${RESET} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}⚠${RESET} $1"
-}
-
-print_error() {
-    echo -e "${RED}✖${RESET} $1"
-}
-
-print_field() {
-
-    printf "%-13s : %s\n" "$1" "$2"
-}
-
 
 ####################################
 #           Timestamp              #

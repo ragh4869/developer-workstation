@@ -8,12 +8,6 @@ source "$HOME/Projects/Workstation/lib/output.sh"
 source "$HOME/Projects/Workstation/lib/docker.sh"
 source "$HOME/Projects/Workstation/lib/system.sh"
 
-echo
-echo "================================================="
-echo "           AI Engineering Workstation            "
-echo "================================================="
-echo
-
 print_header "AI Engineering Workstation"
 
 echo "System"
