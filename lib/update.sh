@@ -5,12 +5,16 @@
 ###############################################################################
 
 platform_pull_images() {
-
     local platform="$1"
+    shift
 
     platform_cd "$platform" || return 1
 
-    docker compose pull
+    if [[ $# -eq 0 ]]; then
+        docker compose pull
+    else
+        docker compose pull "$@"
+    fi
 }
 
 ###############################################################################
@@ -61,20 +65,35 @@ platform_service_image_id() {
 
 platform_snapshot_images() {
     local service
-    local image_id
 
-    while IFS= read -r service
-    do
-        [[ -n "$service" ]] || continue
+    # No services supplied = all services in the platform
+    if [[ $# -eq 0 ]]; then
 
-        image_id="$(platform_service_image_id "$service" 2>/dev/null || true)"
+        while IFS= read -r service
+        do
+            [[ -z "$service" ]] && continue
 
-        printf '%s=%s\n' \
-            "$service" \
-            "$image_id"
+            printf "%s=%s\n" \
+                "$service" \
+                "$(platform_service_image "$service")"
 
-    done < <(platform_services)
+        done < <(platform_services)
+
+    else
+
+        # One or more specific services supplied
+        for service in "$@"
+        do
+            [[ -z "$service" ]] && continue
+
+            printf "%s=%s\n" \
+                "$service" \
+                "$(platform_service_image "$service")"
+        done
+
+    fi
 }
+
 
 ###############################################################################
 # Compare image snapshots
@@ -90,35 +109,21 @@ platform_snapshot_images() {
 platform_changed_services() {
     local before="$1"
     local after="$2"
-
-    declare -A before_images
-    declare -A after_images
+    shift 2
 
     local service
-    local image_id
+    local before_image
+    local after_image
 
-    while IFS='=' read -r service image_id
+    for service in "$@"
     do
-        [[ -n "$service" ]] || continue
-        before_images["$service"]="$image_id"
-    done <<< "$before"
+        before_image="$(awk -F= -v s="$service" '$1 == s {print $2}' <<< "$before")"
+        after_image="$(awk -F= -v s="$service" '$1 == s {print $2}' <<< "$after")"
 
-    while IFS='=' read -r service image_id
-    do
-        [[ -n "$service" ]] || continue
-        after_images["$service"]="$image_id"
-    done <<< "$after"
-
-    while IFS= read -r service
-    do
-        [[ -n "$service" ]] || continue
-
-        if [[ "${before_images[$service]:-}" != "${after_images[$service]:-}" ]]
-        then
+        if [[ "$before_image" != "$after_image" ]]; then
             printf '%s\n' "$service"
         fi
-
-    done < <(platform_services)
+    done
 }
 
 ###############################################################################
@@ -128,35 +133,21 @@ platform_changed_services() {
 platform_unchanged_services() {
     local before="$1"
     local after="$2"
-
-    declare -A before_images
-    declare -A after_images
+    shift 2
 
     local service
-    local image_id
+    local before_image
+    local after_image
 
-    while IFS='=' read -r service image_id
+    for service in "$@"
     do
-        [[ -n "$service" ]] || continue
-        before_images["$service"]="$image_id"
-    done <<< "$before"
+        before_image="$(awk -F= -v s="$service" '$1 == s {print $2}' <<< "$before")"
+        after_image="$(awk -F= -v s="$service" '$1 == s {print $2}' <<< "$after")"
 
-    while IFS='=' read -r service image_id
-    do
-        [[ -n "$service" ]] || continue
-        after_images["$service"]="$image_id"
-    done <<< "$after"
-
-    while IFS= read -r service
-    do
-        [[ -n "$service" ]] || continue
-
-        if [[ "${before_images[$service]:-}" == "${after_images[$service]:-}" ]]
-        then
+        if [[ "$before_image" == "$after_image" ]]; then
             printf '%s\n' "$service"
         fi
-
-    done < <(platform_services)
+    done
 }
 
 ###############################################################
@@ -274,4 +265,110 @@ platform_has_service() {
         -f "$(get_compose_file "$platform")" \
         config --services \
     | grep -Fxq -- "$service"
+}
+
+################################################################################
+# Wait for service health
+################################################################################
+
+platform_wait_for_health() {
+    local platform="$1"
+    shift
+
+    local timeout="${1:-60}"
+    shift || true
+
+    local interval=2
+    local elapsed=0
+    local service
+    local container_ids
+    local container_id
+    local state
+    local health
+
+    platform_cd "$platform" || return 1
+
+    while (( elapsed < timeout ))
+    do
+        local all_healthy=true
+
+        for service in "$@"
+        do
+            container_ids="$(docker compose ps -q "$service")"
+
+            if [[ -z "$container_ids" ]]; then
+                all_healthy=false
+                continue
+            fi
+
+            while read -r container_id
+            do
+                [[ -z "$container_id" ]] && continue
+
+                state="$(docker inspect \
+                    -f '{{.State.Status}}' \
+                    "$container_id" 2>/dev/null)"
+
+                if [[ "$state" != "running" ]]; then
+                    all_healthy=false
+                    continue
+                fi
+
+                health="$(docker inspect \
+                    -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' \
+                    "$container_id" 2>/dev/null)"
+
+                case "$health" in
+                    healthy|no-healthcheck)
+                        ;;
+                    starting|unhealthy|*)
+                        all_healthy=false
+                        ;;
+                esac
+
+            done <<< "$container_ids"
+        done
+
+        if [[ "$all_healthy" == true ]]; then
+            return 0
+        fi
+
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    return 1
+}
+
+platform_service_health_status() {
+    local platform="$1"
+    local service="$2"
+
+    platform_cd "$platform" || return 1
+
+    local container_id
+    local state
+    local health
+
+    container_id="$(docker compose ps -q "$service" | head -n 1)"
+
+    if [[ -z "$container_id" ]]; then
+        printf '%s\n' "missing"
+        return 1
+    fi
+
+    state="$(docker inspect \
+        -f '{{.State.Status}}' \
+        "$container_id" 2>/dev/null)"
+
+    if [[ "$state" != "running" ]]; then
+        printf '%s\n' "$state"
+        return 1
+    fi
+
+    health="$(docker inspect \
+        -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' \
+        "$container_id" 2>/dev/null)"
+
+    printf '%s\n' "$health"
 }

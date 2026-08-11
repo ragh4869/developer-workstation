@@ -8,7 +8,7 @@ set -e
 PLATFORM="$1"
 shift
 
-SERVICE=""
+SERVICE=()
 AUTO_BACKUP=true
 
 while [[ $# -gt 0 ]]; do
@@ -25,12 +25,7 @@ while [[ $# -gt 0 ]]; do
             ;;
 
         *)
-            if [[ -z "$SERVICE" ]]; then
-                SERVICE="$1"
-            else
-                print_error "Unexpected argument: $1"
-                exit 1
-            fi
+            SERVICES+=("$1")
             shift
             ;;
     esac
@@ -43,32 +38,40 @@ print_header "Platform Update"
 echo
 echo "Platform : $PLATFORM"
 
-if [[ -n "$SERVICE" ]]; then
-    echo "Service  : $SERVICE"
+if [[ ${#SERVICES[@]} -gt 0 ]]; then
+    SERVICE_DISPLAY="$(IFS=', '; echo "${SERVICES[*]}")"
+    echo "Service  : $SERVICE_DISPLAY"
 else
     echo "Service  : All"
 fi
 
 echo
 
-if [[ -n "$SERVICE" ]]; then
+# Validate requested services
+if [[ ${#SERVICES[@]} -gt 0 ]]; then
 
-    if ! platform_has_service "$PLATFORM" "$SERVICE"; then
+    for SERVICE in "${SERVICES[@]}"; do
 
-        print_error "Unknown service: $SERVICE"
-        echo
+        if ! platform_has_service "$PLATFORM" "$SERVICE"; then
 
-        print_info "Available Services"
+            print_error "Unknown service: $SERVICE"
+            echo
 
-        docker compose \
-            -f "$(get_compose_file "$PLATFORM")" \
-            config --services \
-        | nl -w1 -s") "
+            print_info "Available Services"
 
-        exit 1
-    fi
+            docker compose \
+                -f "$(get_compose_file "$PLATFORM")" \
+                config --services \
+                | nl -w1 -s") "
+
+            exit 1
+        fi
+
+    done
+
 fi
 
+# Automatic backup
 if $AUTO_BACKUP; then
 
     print_info "Creating backup before update..."
@@ -82,6 +85,7 @@ if $AUTO_BACKUP; then
     fi
 
     echo
+
 fi
 
 read -rp "Update images? (Y/n): " CONFIRM
@@ -92,20 +96,32 @@ echo
 
 print_info "Checking for image updates..."
 
+# Resolve the actual services to process
+if [[ ${#SERVICES[@]} -eq 0 ]]; then
+    # No service specified = ALL services
+    mapfile -t TARGET_SERVICES < <(
+        platform_cd "$PLATFORM" || exit 1
+        platform_services
+    )
+else
+    # Specific services requested
+    TARGET_SERVICES=("${SERVICES[@]}")
+fi
+
 ###############################################################################
 # Snapshot images BEFORE pull
 ###############################################################################
 
 BEFORE_IMAGES="$(
     platform_cd "$PLATFORM" || exit 1
-    platform_snapshot_images
+    platform_snapshot_images "${TARGET_SERVICES[@]}"
 )"
 
 ###############################################################################
 # Pull latest images
 ###############################################################################
 
-PULL_OUTPUT="$(platform_pull_images_capture "$PLATFORM")" || {
+PULL_OUTPUT="$(platform_pull_images_capture "$PLATFORM" "${TARGET_SERVICES[@]}")" || {
     print_error "Failed to pull platform images."
     return 1
 }
@@ -116,7 +132,7 @@ PULL_OUTPUT="$(platform_pull_images_capture "$PLATFORM")" || {
 
 AFTER_IMAGES="$(
     platform_cd "$PLATFORM" || exit 1
-    platform_snapshot_images
+    platform_snapshot_images "${TARGET_SERVICES[@]}"
 )"
 
 ###############################################################################
@@ -131,7 +147,10 @@ do
     [[ -n "$svc" ]] && UPDATED_SERVICES+=("$svc")
 done < <(
     platform_cd "$PLATFORM" || exit 1
-    platform_changed_services "$BEFORE_IMAGES" "$AFTER_IMAGES"
+    platform_changed_services \
+        "$BEFORE_IMAGES" \
+        "$AFTER_IMAGES" \
+        "${TARGET_SERVICES[@]}"
 )
 
 while IFS= read -r svc
@@ -139,7 +158,10 @@ do
     [[ -n "$svc" ]] && UNCHANGED_SERVICES+=("$svc")
 done < <(
     platform_cd "$PLATFORM" || exit 1
-    platform_unchanged_services "$BEFORE_IMAGES" "$AFTER_IMAGES"
+    platform_unchanged_services \
+        "$BEFORE_IMAGES" \
+        "$AFTER_IMAGES" \
+        "${TARGET_SERVICES[@]}"
 )
 
 for svc in "${UPDATED_SERVICES[@]}"
@@ -156,43 +178,70 @@ done
 
 echo
 
-print_info "Updating changed containers..."
+###############################################################################
+# Update changed services
+###############################################################################
 
-if [[ -n "$SERVICE" ]]; then
+if [[ ${#UPDATED_SERVICES[@]} -eq 0 ]]; then
 
-    # Specific service requested
-    SERVICE_CHANGED=false
-
-    for svc in "${UPDATED_SERVICES[@]}"
-    do
-        if [[ "$svc" == "$SERVICE" ]]; then
-            SERVICE_CHANGED=true
-            break
-        fi
-    done
-
-    if [[ "$SERVICE_CHANGED" == true ]]; then
-        platform_update_service "$PLATFORM" "$SERVICE"
+    if [[ ${#SERVICES[@]} -gt 0 ]]; then
+        print_info "All requested services are already up-to-date."
     else
-        print_info "$SERVICE is already up-to-date."
+        print_info "All services are already up-to-date."
     fi
 
 else
 
-    # No specific service: update only changed services
-    if [[ ${#UPDATED_SERVICES[@]} -eq 0 ]]; then
+    print_info "Updating changed containers..."
 
-        print_info "All services are already up-to-date."
+    for svc in "${UPDATED_SERVICES[@]}"
+    do
+        platform_update_service "$PLATFORM" "$svc"
+    done
 
-    else
+fi
+
+echo
+
+if [[ ${#UPDATED_SERVICES[@]} -gt 0 ]]; then
+    print_info "Waiting for service health..."
+
+    if ! platform_wait_for_health \
+        "$PLATFORM" \
+        60 \
+        "${UPDATED_SERVICES[@]}"
+    then
+        print_error "One or more updated services failed to become healthy."
 
         for svc in "${UPDATED_SERVICES[@]}"
         do
-            platform_update_service "$PLATFORM" "$svc"
+            status="$(platform_service_health_status "$PLATFORM" "$svc")"
+
+            printf "  %-18s %s\n" "$svc" "$status"
         done
 
+        return 1
     fi
 
+    for svc in "${UPDATED_SERVICES[@]}"
+    do
+        status="$(platform_service_health_status "$PLATFORM" "$svc")"
+
+        case "$status" in
+            healthy|no-healthcheck)
+                printf " "
+                print_success "✓"
+                printf " %-18s %s\n" "$svc" "Healthy"
+                ;;
+            *)
+                printf " "
+                print_error "✗"
+                printf " %-18s %s\n" "$svc" "$status"
+                ;;
+        esac
+    done
+else
+    print_info "No changed services require health verification."
 fi
 
 echo
