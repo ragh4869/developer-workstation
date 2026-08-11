@@ -156,12 +156,43 @@ done
 
 echo
 
-print_info "Updating containers..."
+print_info "Updating changed containers..."
 
 if [[ -n "$SERVICE" ]]; then
-    platform_update_service "$PLATFORM" "$SERVICE"
+
+    # Specific service requested
+    SERVICE_CHANGED=false
+
+    for svc in "${UPDATED_SERVICES[@]}"
+    do
+        if [[ "$svc" == "$SERVICE" ]]; then
+            SERVICE_CHANGED=true
+            break
+        fi
+    done
+
+    if [[ "$SERVICE_CHANGED" == true ]]; then
+        platform_update_service "$PLATFORM" "$SERVICE"
+    else
+        print_info "$SERVICE is already up-to-date."
+    fi
+
 else
-    platform_update_all "$PLATFORM"
+
+    # No specific service: update only changed services
+    if [[ ${#UPDATED_SERVICES[@]} -eq 0 ]]; then
+
+        print_info "All services are already up-to-date."
+
+    else
+
+        for svc in "${UPDATED_SERVICES[@]}"
+        do
+            platform_update_service "$PLATFORM" "$svc"
+        done
+
+    fi
+
 fi
 
 echo
