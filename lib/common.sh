@@ -35,6 +35,7 @@ source "$COMMON_LIB_DIR/logs.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/backup.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/restore.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/update.sh" 2>/dev/null
+source "$COMMON_LIB_DIR/services.sh" 2>/dev/null
 
 ####################################
 #             Colors               #

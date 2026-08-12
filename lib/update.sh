@@ -11,9 +11,9 @@ platform_pull_images() {
     platform_cd "$platform" || return 1
 
     if [[ $# -eq 0 ]]; then
-        docker compose pull
+        docker compose pull 2>&1
     else
-        docker compose pull "$@"
+        docker compose pull "$@" 2>&1
     fi
 }
 
@@ -30,7 +30,7 @@ platform_services() {
 # Get configured image reference for a service
 ###############################################################################
 
-platform_service_image() {
+platform_service_image_old() {
     local service="$1"
     local image
 
@@ -45,15 +45,29 @@ platform_service_image() {
     printf '%s\n' "$image"
 }
 
+platform_service_image() {
+    local platform="$1"
+    local service="$2"
+
+    (
+        platform_cd "$platform"
+
+        docker compose config --format json |
+            jq -r --arg service "$service" \
+            '.services[$service].image // empty'
+    )
+}
+
 ###############################################################################
 # Get local image ID for a service
 ###############################################################################
 
 platform_service_image_id() {
-    local service="$1"
+    local platform="$1"
+    local service="$2"
     local image
 
-    image="$(platform_service_image "$service")" || return 1
+    image="$(platform_service_image "$platform" "$service")" || return 1
 
     docker image inspect "$image" \
         --format '{{.Id}}' 2>/dev/null
@@ -64,6 +78,9 @@ platform_service_image_id() {
 ###############################################################################
 
 platform_snapshot_images() {
+    local platform="$1"
+    shift
+
     local service
 
     # No services supplied = all services in the platform
@@ -75,7 +92,7 @@ platform_snapshot_images() {
 
             printf "%s=%s\n" \
                 "$service" \
-                "$(platform_service_image "$service")"
+                "$(platform_service_image_id "$platform" "$service")"
 
         done < <(platform_services)
 
@@ -88,7 +105,7 @@ platform_snapshot_images() {
 
             printf "%s=%s\n" \
                 "$service" \
-                "$(platform_service_image "$service")"
+                "$(platform_service_image_id "$platform" "$service")"
         done
 
     fi
@@ -210,46 +227,31 @@ platform_update_service() {
     )
 }
 
-###############################################################
-# Parse updated services from docker compose pull
-###############################################################
+###############################################################################
+# Remote image digest
+###############################################################################
 
-get_updated_services() {
+remote_image_digest() {
+    local image="$1"
 
-    local pull_output="$1"
+    [[ -n "$image" ]] || return 1
 
-    while IFS= read -r line
-    do
-        printf 'LINE=<%q>\n' "$line" >&2
-
-        if [[ "$line" =~ Image[[:space:]]+(.+)[[:space:]]+(Pulled|Downloaded|Updated)$ ]]; then
-            echo "MATCH=[${BASH_REMATCH[1]}]" >&2
-            echo "${BASH_REMATCH[1]}"
-        fi
-
-    done <<< "$pull_output"
+    docker buildx imagetools inspect "$image" \
+        --format '{{.Manifest.Digest}}' 2>/dev/null
 }
 
-###############################################################
-# Parse unchanged services
-###############################################################
+###############################################################################
+# Local image digest
+###############################################################################
 
-get_unchanged_services() {
+local_image_digest() {
+    local image="$1"
 
-    local pull_output="$1"
-    local image
+    [[ -n "$image" ]] || return 1
 
-    while IFS= read -r line
-    do
-        [[ "$line" != Image* ]] && continue
-
-        image=$(awk '{print $2}' <<< "$line")
-
-        if [[ "$line" == *"Already up to date"* ]]; then
-            echo "$image"
-        fi
-
-    done <<< "$pull_output"
+    docker image inspect "$image" \
+        --format '{{index .RepoDigests 0}}' 2>/dev/null |
+        sed 's/.*@//'
 }
 
 ############################################################

@@ -104,33 +104,141 @@ if [[ "$DRY_RUN" == true ]]; then
 
     echo
 
-    print_info "Checking current image state..."
+    print_info "Checking remote image state..."
 
-    BEFORE_IMAGES="$(
-        platform_cd "$PLATFORM" || exit 1
-        platform_snapshot_images "${SERVICES[@]}"
-    )"
+    UPDATED_SERVICES=()
+    UNCHANGED_SERVICES=()
+    UNKNOWN_SERVICES=()
 
-    print_info "Current image state:"
+    # Resolve the actual services to inspect
+    if [[ ${#SERVICES[@]} -eq 0 ]]; then
+
+        mapfile -t TARGET_SERVICES < <(
+            platform_cd "$PLATFORM" || exit 1
+            platform_services
+        )
+
+    else
+
+        TARGET_SERVICES=("${SERVICES[@]}")
+
+    fi
+
+    for SVC in "${TARGET_SERVICES[@]}"; do
+
+        [[ -n "$SVC" ]] || continue
+
+        IMAGE="$(
+            platform_cd "$PLATFORM" || exit 1
+
+            docker compose \
+                -f "$(get_compose_file "$PLATFORM")" \
+                config --format json |
+                jq -r --arg svc "$SVC" \
+                    '.services[$svc].image // empty'
+        )"
+
+        if [[ -z "$IMAGE" ]]; then
+            print_warning "$SVC: unable to determine image"
+            UNKNOWN_SERVICES+=("$SVC")
+            continue
+        fi
+
+        LOCAL_DIGEST="$(local_image_digest "$IMAGE" || true)"
+        REMOTE_DIGEST="$(remote_image_digest "$IMAGE" || true)"
+
+        if [[ -z "$REMOTE_DIGEST" ]]; then
+            print_warning "$SVC: unable to query remote image"
+            UNKNOWN_SERVICES+=("$SVC")
+            continue
+        fi
+
+        if [[ -z "$LOCAL_DIGEST" ]]; then
+            print_warning "$SVC: local image digest unavailable"
+            UNKNOWN_SERVICES+=("$SVC")
+            continue
+        fi
+
+        if [[ "$LOCAL_DIGEST" == "$REMOTE_DIGEST" ]]; then
+            UNCHANGED_SERVICES+=("$SVC")
+        else
+            UPDATED_SERVICES+=("$SVC")
+        fi
+
+    done
+
     echo
 
-    while IFS='=' read -r service image_id
-    do
-        [[ -n "$service" ]] || continue
+    ###############################################################################
+    # Would update
+    ###############################################################################
 
-        printf "  %-18s %s\n" "$service" "$image_id"
-    done <<< "$BEFORE_IMAGES"
+    if [[ ${#UPDATED_SERVICES[@]} -gt 0 ]]; then
 
-    echo
+        print_header "Updates Available"
 
-    print_warning "Dry run does not pull images."
-    print_warning "Image changes can only be confirmed after a real pull."
+        for SVC in "${UPDATED_SERVICES[@]}"; do
+            printf "  "
+            printf "✔  %-18s Update available\n" "$SVC"
+        done
+
+        echo
+
+    fi
+
+    ###############################################################################
+    # Already current
+    ###############################################################################
+
+    if [[ ${#UNCHANGED_SERVICES[@]} -gt 0 ]]; then
+
+        print_header "Already Up-to-Date"
+
+        for SVC in "${UNCHANGED_SERVICES[@]}"; do
+            printf "  "
+            printf "✔  %-18s Already up-to-date\n" "$SVC"
+        done
+
+        echo
+
+    fi
+
+    ###############################################################################
+    # Unknown
+    ###############################################################################
+
+    if [[ ${#UNKNOWN_SERVICES[@]} -gt 0 ]]; then
+
+        print_header "Unable to Determine"
+
+        for SVC in "${UNKNOWN_SERVICES[@]}"; do
+            printf "  "
+            print_warning "!"
+            printf " %-18s Unable to determine remote state\n" "$SVC"
+        done
+
+        echo
+
+    fi
+
+    ###############################################################################
+    # Summary
+    ###############################################################################
+
+    if [[ ${#UPDATED_SERVICES[@]} -gt 0 ]]; then
+        print_info "Updates are available for ${#UPDATED_SERVICES[@]} service(s)."
+    else
+        print_success "All checked services are already up-to-date."
+    fi
 
     echo
 
     print_success "Dry run completed. No changes were made."
+    print_info "No backup was created."
+    print_info "No images were pulled."
 
     exit 0
+
 fi
 
 # Automatic backup
@@ -189,14 +297,14 @@ fi
 
 BEFORE_IMAGES="$(
     platform_cd "$PLATFORM" || exit 1
-    platform_snapshot_images "${TARGET_SERVICES[@]}"
+    platform_snapshot_images "$PLATFORM" "${TARGET_SERVICES[@]}"
 )"
 
 ###############################################################################
 # Pull latest images
 ###############################################################################
 
-PULL_OUTPUT="$(platform_pull_images_capture "$PLATFORM" "${TARGET_SERVICES[@]}")" || {
+PULL_OUTPUT="$(platform_pull_images "$PLATFORM" "${TARGET_SERVICES[@]}")" || {
     print_error "Failed to pull platform images."
     exit 1
 }
@@ -207,7 +315,7 @@ PULL_OUTPUT="$(platform_pull_images_capture "$PLATFORM" "${TARGET_SERVICES[@]}")
 
 AFTER_IMAGES="$(
     platform_cd "$PLATFORM" || exit 1
-    platform_snapshot_images "${TARGET_SERVICES[@]}"
+    platform_snapshot_images "$PLATFORM" "${TARGET_SERVICES[@]}"
 )"
 
 ###############################################################################

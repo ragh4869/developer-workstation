@@ -30,6 +30,10 @@ logs)
     "$HOME/Projects/Workstation/commands/logs.sh" "${@:2}"
 ;;
 
+services)
+    "$HOME/Projects/Workstation/commands/services.sh" "${@:2}"
+;;
+
 list)
 
 exec "$HOME/Projects/Workstation/commands/list.sh"
