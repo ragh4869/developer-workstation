@@ -1,256 +1,274 @@
 #!/usr/bin/env bash
 
+# ============================================================
+# Workstation - Platform Health
+# Command orchestration
+# ============================================================
+
+set -o pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
 
-set -e
+# ============================================================
+# Arguments
+# ============================================================
 
-PLATFORM="$1"
+PLATFORM="${1:-}"
 shift || true
 
-if [[ -z "$PLATFORM" ]]; then
-    print_error "Platform is required."
-    echo
-    echo "Usage:"
-    echo "  platform health <platform> [service ...]"
-    exit 1
-fi
+REQUESTED_SERVICES=("$@")
 
-prepare_platform "$PLATFORM"
+
+# ============================================================
+# Header
+# ============================================================
 
 print_header "Platform Health"
 
-echo "Platform : $PLATFORM"
+# ============================================================
+# Validate platform
+# ============================================================
 
-###############################################################################
-# Resolve configured services
-###############################################################################
-
-mapfile -t ALL_SERVICES < <(
-    platform_cd "$PLATFORM" || exit 1
-    platform_services
-)
-
-if [[ ${#ALL_SERVICES[@]} -eq 0 ]]; then
-    print_warning "No services found for platform: $PLATFORM"
-    exit 0
+if [[ -z "$PLATFORM" ]]; then
+    printf 'Platform : All\n\n'
+    printf '✗ Platform is required.\n'
+    exit 1
 fi
 
-###############################################################################
-# Resolve requested services
-###############################################################################
+printf 'Platform : %s\n' "$PLATFORM"
 
-if [[ $# -eq 0 ]]; then
+if ! platform_exists "$PLATFORM"; then
 
-    TARGET_SERVICES=("${ALL_SERVICES[@]}")
+    printf '✗ Unknown platform: %s\n\n' "$PLATFORM"
+
+    printf 'ℹ Available Platforms\n'
+
+    list_platforms
+
+    exit 1
+fi
+
+
+# ============================================================
+# Resolve platform directory
+# ============================================================
+
+PLATFORM_DIR="$(get_platform_dir "$PLATFORM")"
+
+if [[ -z "$PLATFORM_DIR" || ! -d "$PLATFORM_DIR" ]]; then
+    printf '✗ Platform directory not found: %s\n' "$PLATFORM_DIR"
+    exit 1
+fi
+
+
+# ============================================================
+# Resolve Compose file
+# ============================================================
+
+COMPOSE_FILE="$(health_compose_file "$PLATFORM_DIR")"
+
+if [[ -z "$COMPOSE_FILE" || ! -f "$COMPOSE_FILE" ]]; then
+
+    printf '✗ No Compose file found for platform: %s\n' "$PLATFORM"
+
+    printf '\nExpected one of:\n'
+    printf '  compose.yml\n'
+    printf '  compose.yaml\n'
+    printf '  docker-compose.yml\n'
+    printf '  docker-compose.yaml\n'
+
+    exit 1
+fi
+
+
+# ============================================================
+# Discover services
+# ============================================================
+
+mapfile -t ALL_SERVICES < <(
+    health_list_services "$COMPOSE_FILE"
+)
+
+if [[ "${#ALL_SERVICES[@]}" -eq 0 ]]; then
+    printf '✗ No services found for platform: %s\n' "$PLATFORM"
+    exit 1
+fi
+
+
+# ============================================================
+# Determine requested services
+# ============================================================
+
+SERVICES=()
+
+if [[ "${#REQUESTED_SERVICES[@]}" -eq 0 ]]; then
+
+    SERVICES=("${ALL_SERVICES[@]}")
 
 else
 
-    TARGET_SERVICES=()
+    for service in "${REQUESTED_SERVICES[@]}"; do
 
-    for REQUESTED_SERVICE in "$@"; do
+        if ! health_service_exists "$COMPOSE_FILE" "$service"; then
 
-        if ! platform_has_service "$PLATFORM" "$REQUESTED_SERVICE"; then
-            print_error "Unknown service: $REQUESTED_SERVICE"
-            echo
+            printf '✗ Unknown service: %s\n\n' "$service"
 
-            print_info "Available Services"
+            printf 'ℹ  Available Services\n'
 
-            for SERVICE in "${ALL_SERVICES[@]}"; do
-                echo "  $SERVICE"
-            done
+            printf '%s\n' "${ALL_SERVICES[@]}"
 
             exit 1
         fi
 
-        TARGET_SERVICES+=("$REQUESTED_SERVICE")
-
+        SERVICES+=("$service")
     done
 
 fi
 
-###############################################################################
-# Display selected services
-###############################################################################
 
-if [[ $# -eq 0 ]]; then
-    echo "Services : All"
+# ============================================================
+# Display selected services
+# ============================================================
+
+if [[ "${#REQUESTED_SERVICES[@]}" -eq 0 ]]; then
+    printf 'Services : All\n'
 else
-    SERVICE_DISPLAY="$(IFS=', '; echo "${TARGET_SERVICES[*]}")"
-    echo "Services : $SERVICE_DISPLAY"
+    printf 'Services : %s\n' "$(IFS=,; echo "${SERVICES[*]}")"
 fi
 
-echo
+printf '\n'
 
-###############################################################################
-# Health table
-###############################################################################
 
-printf "%-20s %-16s %-22s %-15s\n" \
+# ============================================================
+# Table Header
+# ============================================================
+
+printf '%-22s %-22s %-28s %-20s\n' \
     "Service" \
     "State" \
     "Health" \
     "Result"
 
-printf "%-20s %-16s %-22s %-15s\n" \
-    "--------------------" \
-    "----------------" \
+printf '%-22s %-22s %-28s %-20s\n' \
     "----------------------" \
-    "---------------"
+    "----------------------" \
+    "----------------------------" \
+    "--------------------"
 
-###############################################################################
+
+# ============================================================
 # Counters
-###############################################################################
+# ============================================================
 
-TOTAL_COUNT=0
-HEALTHY_COUNT=0
-NO_HEALTHCHECK_COUNT=0
-UNHEALTHY_COUNT=0
-STOPPED_COUNT=0
-RESTARTING_COUNT=0
+TOTAL=0
+HEALTHY=0
+UNHEALTHY=0
+STARTING=0
+NO_HEALTHCHECK=0
+NOT_RUNNING=0
+NEEDS_CHECK=0
 
-###############################################################################
-# Inspect services
-###############################################################################
 
-for SERVICE in "${TARGET_SERVICES[@]}"; do
+# ============================================================
+# Health orchestration
+# ============================================================
 
-    [[ -n "$SERVICE" ]] || continue
+for service in "${SERVICES[@]}"; do
 
-    TOTAL_COUNT=$((TOTAL_COUNT + 1))
+    health_check_service "$COMPOSE_FILE" "$service"
 
-    STATE="$(platform_service_state "$PLATFORM" "$SERVICE")"
-    HEALTH="$(platform_service_health "$PLATFORM" "$SERVICE")"
+    TOTAL=$((TOTAL + 1))
 
-    [[ -n "$STATE" ]] || STATE="not created"
+    case "$HEALTH_RESULT" in
 
-    [[ -n "$HEALTH" ]] || HEALTH=""
-
-    case "$STATE" in
-
-        running)
-
-            DISPLAY_STATE="Running"
-
-            case "$HEALTH" in
-
-                healthy)
-                    DISPLAY_HEALTH="Healthy"
-                    RESULT="Healthy"
-                    HEALTHY_COUNT=$((HEALTHY_COUNT + 1))
-                    ;;
-
-                unhealthy)
-                    DISPLAY_HEALTH="Unhealthy"
-                    RESULT="Unhealthy"
-                    UNHEALTHY_COUNT=$((UNHEALTHY_COUNT + 1))
-                    ;;
-
-                starting)
-                    DISPLAY_HEALTH="Starting"
-                    RESULT="Starting"
-                    ;;
-
-                *)
-                    DISPLAY_HEALTH="No healthcheck"
-                    RESULT="Needs check"
-                    NO_HEALTHCHECK_COUNT=$((NO_HEALTHCHECK_COUNT + 1))
-                    ;;
-
-            esac
+        Healthy)
+            HEALTHY=$((HEALTHY + 1))
             ;;
 
-        exited)
-            DISPLAY_STATE="Exited"
-            DISPLAY_HEALTH="Unavailable"
-            RESULT="Stopped"
-            STOPPED_COUNT=$((STOPPED_COUNT + 1))
+        Unhealthy)
+            UNHEALTHY=$((UNHEALTHY + 1))
             ;;
 
-        restarting)
-            DISPLAY_STATE="Restarting"
-            DISPLAY_HEALTH="Unavailable"
-            RESULT="Restarting"
-            RESTARTING_COUNT=$((RESTARTING_COUNT + 1))
+        Starting)
+            STARTING=$((STARTING + 1))
             ;;
 
-        created)
-            DISPLAY_STATE="Created"
-            DISPLAY_HEALTH="Unavailable"
-            RESULT="Not running"
-            STOPPED_COUNT=$((STOPPED_COUNT + 1))
+        Needs\ check)
+            NEEDS_CHECK=$((NEEDS_CHECK + 1))
             ;;
 
-        *)
-            DISPLAY_STATE="$STATE"
-            DISPLAY_HEALTH="Unavailable"
-            RESULT="Unavailable"
-            STOPPED_COUNT=$((STOPPED_COUNT + 1))
+        Not\ running|Restarting)
+            NOT_RUNNING=$((NOT_RUNNING + 1))
             ;;
 
     esac
 
-    printf "%-20s %-16s %-22s %-15s\n" \
-        "$SERVICE" \
-        "$DISPLAY_STATE" \
-        "$DISPLAY_HEALTH" \
-        "$RESULT"
+    if [[ "$HEALTH_STATUS" == "No healthcheck" ]]; then
+        NO_HEALTHCHECK=$((NO_HEALTHCHECK + 1))
+    fi
+
+    printf '%-22s %-22s %-28s %-20s\n' \
+        "$service" \
+        "$HEALTH_STATE" \
+        "$HEALTH_STATUS" \
+        "$HEALTH_RESULT"
 
 done
 
-###############################################################################
+
+# ============================================================
 # Summary
-###############################################################################
+# ============================================================
 
-echo
-printf "%s\n" \
-    "--------------------------------------------------------------------------------"
+printf '\n'
+printf '%s\n' '-----------------------------------------------------------------------------------------------'
+printf '\n'
 
-echo
+printf 'ℹ  %s services checked\n' "$TOTAL"
+printf '✔  %s services healthy\n' "$HEALTHY"
 
-print_info "$TOTAL_COUNT services checked"
-
-if [[ $HEALTHY_COUNT -gt 0 ]]; then
-    print_success "$HEALTHY_COUNT services healthy"
+if [[ "$UNHEALTHY" -gt 0 ]]; then
+    printf ' ✘ %s services unhealthy\n' "$UNHEALTHY"
 fi
 
-if [[ $NO_HEALTHCHECK_COUNT -gt 0 ]]; then
-    print_warning "$NO_HEALTHCHECK_COUNT services have no healthcheck"
+if [[ "$STARTING" -gt 0 ]]; then
+    printf ' ⚠ %s services still starting\n' "$STARTING"
 fi
 
-if [[ $UNHEALTHY_COUNT -gt 0 ]]; then
-    print_error "$UNHEALTHY_COUNT services unhealthy"
+if [[ "$NO_HEALTHCHECK" -gt 0 ]]; then
+    printf ' ⚠ %s services have no healthcheck\n' "$NO_HEALTHCHECK"
 fi
 
-if [[ $STOPPED_COUNT -gt 0 ]]; then
-    print_error "$STOPPED_COUNT services stopped or not running"
+if [[ "$NOT_RUNNING" -gt 0 ]]; then
+    printf ' ✘ %s services are not running\n' "$NOT_RUNNING"
 fi
 
-if [[ $RESTARTING_COUNT -gt 0 ]]; then
-    print_warning "$RESTARTING_COUNT services restarting"
-fi
 
-echo
+# ============================================================
+# Final platform result
+# ============================================================
 
-###############################################################################
-# Overall result
-###############################################################################
+printf '\n'
 
-if [[ $UNHEALTHY_COUNT -gt 0 ||
-      $STOPPED_COUNT -gt 0 ||
-      $RESTARTING_COUNT -gt 0 ]]; then
+if [[ "$UNHEALTHY" -gt 0 || "$NOT_RUNNING" -gt 0 ]]; then
 
-    print_error "Platform health check failed."
+    printf '✘ Platform is unhealthy.\n'
     exit 1
 
-elif [[ $NO_HEALTHCHECK_COUNT -gt 0 ]]; then
+elif [[ "$STARTING" -gt 0 ]]; then
 
-    print_warning "Platform is running, but some services require additional health verification."
+    printf '⚠ Platform is starting; health verification is incomplete.\n'
+    exit 1
+
+elif [[ "$NEEDS_CHECK" -gt 0 ]]; then
+
+    printf '⚠ Platform is running, but some services require additional health verification.\n'
     exit 0
 
 else
 
-    print_success "All checked services are healthy."
+    printf '✔  Platform is healthy.\n'
     exit 0
 
 fi
