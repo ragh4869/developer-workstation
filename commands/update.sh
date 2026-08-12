@@ -47,7 +47,6 @@ prepare_platform "$PLATFORM"
 
 print_header "Platform Update"
 
-echo
 echo "Platform : $PLATFORM"
 
 if [[ ${#SERVICES[@]} -gt 0 ]]; then

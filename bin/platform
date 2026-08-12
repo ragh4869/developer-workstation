@@ -45,7 +45,7 @@ health)
 ;;
 
 doctor)
-    "$HOME/Projects/Workstation/commands/doctor.sh"
+    "$HOME/Projects/Workstation/commands/doctor.sh" "${@:2}"
 ;;
 
 backup)
