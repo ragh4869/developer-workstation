@@ -9,15 +9,25 @@ source "$SCRIPT_DIR/../lib/volumes.sh"
 
 PLATFORM="${1:-}"
 BACKUP_PATH="${2:-}"
+AUTO_CONFIRM=false
+
+if [[ "${3:-}" == "--yes" ]]; then
+    AUTO_CONFIRM=true
+fi
 
 require_platform "$PLATFORM"
 require_docker
 
 SOURCE="$(get_platform_dir "$PLATFORM")"
 
-if [[ -z "$BACKUP_PATH" ]]; then
-    BACKUP_PATH="$(select_backup "$PLATFORM")"
+if [[ "$AUTO_CONFIRM" == true ]]; then
+    BACKUP_PATH="$(latest_backup "$PLATFORM")"
+else
+    if [[ -z "$BACKUP_PATH" ]]; then
+        BACKUP_PATH="$(select_backup "$PLATFORM")"
+    fi
 fi
+
 
 if [[ ! -d "$BACKUP_PATH" ]]; then
     print_error "Backup not found."
@@ -73,14 +83,18 @@ SIZE=$(du -sh "$BACKUP_PATH" | cut -f1)
 printf "%-12s : %s\n" "Size" "$SIZE"
 
 echo
-print_warning "This will overwrite the current platform."
+if [[ "$AUTO_CONFIRM" == true ]]; then
+    print_warning "Automatic rollback: restoring this backup."
+else
+    print_warning "This will overwrite the current platform."
 
-read -rp "Continue and restore this backup? (y/N): " CONFIRM
+    read -rp "Continue and restore this backup? (y/N): " CONFIRM
 
-[[ "$CONFIRM" =~ ^[Yy]$ ]] || {
-    print_warning "Restore cancelled."
-    exit 0
-}
+    [[ "$CONFIRM" =~ ^[Yy]$ ]] || {
+        print_warning "Restore cancelled."
+        exit 0
+    }
+fi
 
 ########################################
 # Stop platform

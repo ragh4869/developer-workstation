@@ -10,9 +10,21 @@ shift
 
 SERVICE=()
 AUTO_BACKUP=true
+FORCE=false
+DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+
+        --force)
+            FORCE=true
+            shift
+            ;;
+
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
 
         --no-backup)
             AUTO_BACKUP=false
@@ -71,6 +83,56 @@ if [[ ${#SERVICES[@]} -gt 0 ]]; then
 
 fi
 
+###############################################################################
+# Dry run
+###############################################################################
+
+if [[ "$DRY_RUN" == true ]]; then
+
+    print_header "Dry Run"
+
+    print_info "No changes will be made."
+    echo
+
+    print_info "Platform : $PLATFORM"
+
+    if [[ ${#SERVICES[@]} -eq 0 ]]; then
+        print_info "Services : All"
+    else
+        print_info "Services : ${SERVICES[*]}"
+    fi
+
+    echo
+
+    print_info "Checking current image state..."
+
+    BEFORE_IMAGES="$(
+        platform_cd "$PLATFORM" || exit 1
+        platform_snapshot_images "${SERVICES[@]}"
+    )"
+
+    print_info "Current image state:"
+    echo
+
+    while IFS='=' read -r service image_id
+    do
+        [[ -n "$service" ]] || continue
+
+        printf "  %-18s %s\n" "$service" "$image_id"
+    done <<< "$BEFORE_IMAGES"
+
+    echo
+
+    print_warning "Dry run does not pull images."
+    print_warning "Image changes can only be confirmed after a real pull."
+
+    echo
+
+    print_success "Dry run completed. No changes were made."
+
+    exit 0
+fi
+
 # Automatic backup
 if $AUTO_BACKUP; then
 
@@ -78,7 +140,14 @@ if $AUTO_BACKUP; then
 
     BACKUP_NAME="$("$SCRIPTS_DIR/backup-platform.sh" "$PLATFORM")"
 
-    print_success "Backup completed."
+    BACKUP_PATH="$(latest_backup "$PLATFORM")"
+
+    if [[ -z "$BACKUP_PATH" || ! -d "$BACKUP_PATH" ]]; then
+        print_error "Backup completed, but backup path could not be determined."
+        exit 1
+    else
+        print_success "Backup completed."
+    fi
 
     if [[ -n "$BACKUP_NAME" ]]; then
         echo "Backup : $(basename "$BACKUP_NAME")"
@@ -88,9 +157,15 @@ if $AUTO_BACKUP; then
 
 fi
 
-read -rp "Update images? (Y/n): " CONFIRM
+if [[ "$DRY_RUN" == true ]]; then
+    :
+elif [[ "$FORCE" == true ]]; then
+    print_warning "Force mode enabled. Skipping update confirmation."
+else
+    read -rp "Update images? (Y/n): " CONFIRM
 
-[[ "$CONFIRM" =~ ^[Nn]$ ]] && exit 0
+    [[ "$CONFIRM" =~ ^[Nn]$ ]] && exit 0
+fi
 
 echo
 
@@ -123,7 +198,7 @@ BEFORE_IMAGES="$(
 
 PULL_OUTPUT="$(platform_pull_images_capture "$PLATFORM" "${TARGET_SERVICES[@]}")" || {
     print_error "Failed to pull platform images."
-    return 1
+    exit 1
 }
 
 ###############################################################################
@@ -211,16 +286,66 @@ if [[ ${#UPDATED_SERVICES[@]} -gt 0 ]]; then
         60 \
         "${UPDATED_SERVICES[@]}"
     then
+
         print_error "One or more updated services failed to become healthy."
 
         for svc in "${UPDATED_SERVICES[@]}"
         do
             status="$(platform_service_health_status "$PLATFORM" "$svc")"
 
-            printf "  %-18s %s\n" "$svc" "$status"
+            print "  %-18s %s\n" "$svc" "$status"
         done
 
-        return 1
+        echo
+
+        #######################################################################
+        # Rollback
+        #######################################################################
+
+        if [[ "$AUTO_BACKUP" == true && -n "$BACKUP_PATH" && -d "$BACKUP_PATH" ]]; then
+
+            print_header "Automatic Rollback"
+
+            print_warning "The update failed health checks."
+            print_info "Restoring the pre-update backup..."
+            echo
+            print_info "Backup : $(basename "$BACKUP_PATH")"
+
+            echo
+
+            if "$SCRIPTS_DIR/restore-platform.sh" \
+                "$PLATFORM" \
+                "$BACKUP_PATH" \
+                --yes
+            then
+                print_success "Rollback completed."
+
+                echo
+                print_info "Verifying platform health after rollback..."
+
+                if platform_health "$PLATFORM"; then
+                    print_success "Rollback health check passed."
+                    print_success "Platform successfully restored to the previous state."
+                    return 1
+                else
+                    print_error "Rollback completed, but the platform is still unhealthy."
+                    return 1
+                fi
+
+            else
+                print_error "Rollback failed."
+                print_error "The platform may be left in an unhealthy state."
+                return 1
+            fi
+
+        else
+
+            print_warning "No automatic backup is available."
+            print_warning "Rollback cannot be performed."
+
+            return 1
+
+        fi
     fi
 
     for svc in "${UPDATED_SERVICES[@]}"
