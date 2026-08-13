@@ -4,24 +4,34 @@
 #       Load configuration         #
 ####################################
 
-if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
-    COMMON_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-elif [[ -n "${ZSH_VERSION:-}" ]]; then
-    COMMON_LIB_DIR="$(cd -- "$(dirname -- "${(%):-%x}")" && pwd)"
-else
-    COMMON_LIB_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+############################################################
+# Resolve common library directory
+############################################################
+
+if [[ -z "${COMMON_LIB_DIR:-}" ]]; then
+
+    if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+        COMMON_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+    elif [[ -n "${ZSH_VERSION:-}" ]]; then
+        COMMON_LIB_DIR="$(cd -- "$(dirname -- "${(%):-%x}")" && pwd)"
+
+    else
+        COMMON_LIB_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+    fi
+
+    readonly COMMON_LIB_DIR
+    readonly LIB_ROOT="$COMMON_LIB_DIR"
+    readonly WORKSTATION_ROOT="$(cd -- "$COMMON_LIB_DIR/.." && pwd)"
+
+    readonly CONFIG_DIR="$WORKSTATION_ROOT/config"
+    readonly RESTORE_EXCLUDES_CONFIG="$CONFIG_DIR/restore-excludes.conf"
+    readonly COMMANDS_DIR="$WORKSTATION_ROOT/commands"
+    readonly SCRIPTS_DIR="$WORKSTATION_ROOT/scripts"
+    readonly BACKUP_DIR="$WORKSTATION_ROOT/backups"
+    readonly INFRASTRUCTURE_ROOT="$HOME/Projects/Infrastructure"
+
 fi
-
-readonly COMMON_LIB_DIR
-readonly LIB_ROOT="$COMMON_LIB_DIR"
-readonly WORKSTATION_ROOT="$(cd -- "$COMMON_LIB_DIR/.." && pwd)"
-
-readonly CONFIG_DIR="$WORKSTATION_ROOT/config"
-readonly RESTORE_EXCLUDES_CONFIG="$CONFIG_DIR/restore-excludes.conf"
-readonly COMMANDS_DIR="$WORKSTATION_ROOT/commands"
-readonly SCRIPTS_DIR="$WORKSTATION_ROOT/scripts"
-readonly BACKUP_DIR="$WORKSTATION_ROOT/backups"
-readonly INFRASTRUCTURE_ROOT="$HOME/Projects/Infrastructure"
 
 source "$COMMON_LIB_DIR/config.sh" 2>/dev/null
 source "$COMMON_LIB_DIR/colors.sh" 2>/dev/null
@@ -78,6 +88,27 @@ platform_exists() {
 
 list_platforms() {
     cut -d'=' -f1 "$CONFIG_DIR/platforms.conf"
+}
+
+resolve_platform_targets() {
+    local target="${1:-}"
+
+    PLATFORM_TARGETS=()
+
+    if [[ -z "$target" ]]; then
+        print_error "Platform target is required."
+        return 1
+    fi
+
+    if [[ "$target" == "all" ]]; then
+        while IFS= read -r platform; do
+            PLATFORM_TARGETS+=("$platform")
+        done < <(list_platforms)
+    else
+        require_platform "$target"
+        PLATFORM_TARGETS=("$target")
+    fi
+
 }
 
 require_platform() {
