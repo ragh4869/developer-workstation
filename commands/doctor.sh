@@ -1,56 +1,48 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+# ============================================================
+# Workstation - Platform Doctor
+# Command orchestration
+# ============================================================
+
+set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
 
-source "$HOME/Projects/Workstation/lib/colors.sh"
-source "$HOME/Projects/Workstation/lib/output.sh"
-source "$HOME/Projects/Workstation/lib/docker.sh"
-source "$HOME/Projects/Workstation/lib/system.sh"
+# ============================================================
+# Arguments
+# ============================================================
 
-print_header "AI Engineering Workstation"
+PLATFORM="${1:-}"
 
-echo "System"
+# ============================================================
+# Header
+# ============================================================
 
-echo
-show_cpu
+print_header "Platform Doctor"
 
-echo
-show_memory
+# ============================================================
+# Validate platform argument
+# ============================================================
 
-echo
-show_disk
-
-require_docker
-
-if docker_running
-then
-    print_success "Docker Running"
-else
-    print_error "Docker Not Running"
+if [[ -z "$PLATFORM" ]]; then
+    printf 'Platform : All\n\n'
+    printf '✗ Platform is required.\n'
+    printf '\nUsage:\n'
+    printf '  platform doctor <platform>\n'
+    printf '\nExample:\n'
+    printf '  platform doctor database\n'
+    exit 1
 fi
 
-echo
-echo "Containers:"
-echo
+printf 'Platform : %s\n' "$PLATFORM"
+printf '\n'
 
-check_container traefik
-check_container homepage
-check_container grafana
-check_container prometheus
-check_container uptime-kuma
+# ============================================================
+# Run doctor
+# ============================================================
 
-check_container portainer
+doctor_platform "$PLATFORM"
 
-check_container n8n
-check_container flowise
-check_container minio
-
-check_container postgres
-check_container redis
-check_container mongodb
-check_container mysql
-
-check_container open-webui
-check_container chromadb
-check_container qdrant
+exit $?
