@@ -9,17 +9,26 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 PLATFORM="$1"
 
-require_platform "$PLATFORM"
+if [[ -z "$PLATFORM" ]]; then
+    print_error "Platform is required."
+    exit 1
+fi
 
-print_header "Platform Status"
+resolve_platform_targets "$PLATFORM" || exit 1
 
-print_field "Platform" "$PLATFORM"
-print_field "Source" "$(get_platform_dir "$PLATFORM")"
+for platform in "${PLATFORM_TARGETS[@]}"; do
 
-echo
+    print_header "Platform Status: $platform"
 
-status_summary "$PLATFORM"
+    print_field "Platform" "$platform"
+    print_field "Source" "$(get_platform_dir "$platform")"
 
-echo
+    echo
 
-status_containers "$PLATFORM"
+    status_summary "$platform"
+
+    echo
+
+    status_containers "$platform"
+
+done

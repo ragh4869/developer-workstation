@@ -22,12 +22,32 @@ GRAY="\033[0;90m"
 ###########################################
 
 print_header() {
+    local title="$1"
+    local width=$((${#title} + 6))
+    local line
+
+    printf -v line '%*s' "$width" ''
+    line=${line// /═}
+
     echo
-    printf "${BOLD}${WHITE}%0.s=" {1..70}
-    echo -e "${RESET}"
-    echo -e "${BOLD}${WHITE}$1${RESET}"
-    printf "${BOLD}${WHITE}%0.s=" {1..70}
-    echo -e "${RESET}"
+    echo -e "${BOLD}${WHITE}╔${line}╗${RESET}"
+    echo -e "${BOLD}${WHITE}║   ${title}   ║${RESET}"
+    echo -e "${BOLD}${WHITE}╚${line}╝${RESET}"
+    echo
+}
+
+print_header_old() {
+    local title="$1"
+    local width=${#title}
+    local line
+
+    printf -v line '%*s' "$width" ''
+    line=${line// /=}
+
+    echo
+    echo -e "${BOLD}${WHITE}${line}${RESET}"
+    echo -e "${BOLD}${WHITE}${title}${RESET}"
+    echo -e "${BOLD}${WHITE}${line}${RESET}"
     echo
 }
 
