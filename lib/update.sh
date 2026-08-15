@@ -4,7 +4,7 @@
 # Pull latest images
 ###############################################################################
 
-platform_pull_images() {
+platform_pull_images_old() {
     local platform="$1"
     shift
 
@@ -15,6 +15,51 @@ platform_pull_images() {
     else
         docker compose pull "$@" 2>&1
     fi
+}
+
+###############################################################################
+# Determine whether a Compose service is locally built
+###############################################################################
+
+platform_service_has_build() {
+    local platform="$1"
+    local service="$2"
+
+    platform_cd "$platform" || return 1
+
+    docker compose config --format json |
+        jq -e --arg service "$service" \
+            '.services[$service].build != null' >/dev/null
+}
+
+###############################################################################
+# Pull latest images / build locally-built services
+###############################################################################
+
+platform_pull_images() {
+    local platform="$1"
+    shift
+
+    platform_cd "$platform" || return 1
+
+    local service
+    local services=()
+
+    if [[ $# -eq 0 ]]; then
+        mapfile -t services < <(platform_services)
+    else
+        services=("$@")
+    fi
+
+    for service in "${services[@]}"; do
+        [[ -n "$service" ]] || continue
+
+        if platform_service_has_build "$platform" "$service"; then
+            docker compose build --pull "$service" 2>&1 || return 1
+        else
+            docker compose pull "$service" 2>&1 || return 1
+        fi
+    done
 }
 
 ###############################################################################
@@ -174,10 +219,10 @@ platform_unchanged_services() {
 platform_pull_images_capture() {
 
     local platform="$1"
+    shift
 
-    platform_cd "$platform" || return 1
+    platform_pull_images "$platform" "$@"
 
-    docker compose pull 2>&1
 }
 
 ############################################################
@@ -189,11 +234,7 @@ platform_pull_service() {
     local platform="$1"
     local service="$2"
 
-    (
-        platform_cd "$platform"
-
-        docker compose pull "$service"
-    )
+    platform_pull_images "$platform" "$service"
 }
 
 ############################################################

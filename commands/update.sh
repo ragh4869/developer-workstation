@@ -8,7 +8,7 @@ set -e
 PLATFORM="$1"
 shift
 
-SERVICE=()
+SERVICES=()
 AUTO_BACKUP=true
 FORCE=false
 DRY_RUN=false
@@ -43,9 +43,169 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+###############################################################################
+# Update all platforms
+###############################################################################
+
+if [[ "$PLATFORM" == "all" ]]; then
+
+    # -------------------------------------------------------------------------
+    # Services cannot be specified with "all"
+    # -------------------------------------------------------------------------
+
+    if [[ ${#SERVICES[@]} -gt 0 ]]; then
+        print_error "Services cannot be specified when updating all platforms."
+        echo
+        print_info "Use:"
+        echo "  platform update <platform> [service ...]"
+        echo
+        print_info "Or:"
+        echo "  platform update all"
+        exit 1
+    fi
+
+    # -------------------------------------------------------------------------
+    # Resolve all configured platforms
+    # -------------------------------------------------------------------------
+
+    mapfile -t ALL_PLATFORMS < <(list_platforms)
+
+    if [[ ${#ALL_PLATFORMS[@]} -eq 0 ]]; then
+        print_error "No platforms are configured."
+        exit 1
+    fi
+
+    # -------------------------------------------------------------------------
+    # Header
+    # -------------------------------------------------------------------------
+
+    print_header "Platform Update: All"
+
+    echo "Platforms : ${ALL_PLATFORMS[*]}"
+
+    if [[ "$AUTO_BACKUP" == true ]]; then
+        echo "Backup    : Enabled"
+    else
+        echo "Backup    : Disabled"
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "Mode      : Dry run"
+    else
+        echo "Mode      : Update"
+    fi
+
+
+    echo
+
+    # -------------------------------------------------------------------------
+    # Global confirmation
+    # -------------------------------------------------------------------------
+
+    if [[ "$DRY_RUN" == false && "$FORCE" == false ]]; then
+
+        print_warning "This will update ALL configured platforms."
+
+        echo
+
+        read -rp "Continue with all platforms? (Y/n): " CONFIRM
+
+        [[ "$CONFIRM" =~ ^[Nn]$ ]] && {
+            print_info "Update cancelled."
+            exit 0
+        }
+
+        echo
+    fi
+
+    # -------------------------------------------------------------------------
+    # Track results
+    # -------------------------------------------------------------------------
+
+    SUCCESSFUL_PLATFORMS=()
+    FAILED_PLATFORMS=()
+
+    # -------------------------------------------------------------------------
+    # Update each platform independently
+    # -------------------------------------------------------------------------
+
+    for TARGET_PLATFORM in "${ALL_PLATFORMS[@]}"; do
+
+        UPDATE_ARGS=()
+
+        # Preserve backup setting
+        if [[ "$AUTO_BACKUP" == false ]]; then
+            UPDATE_ARGS+=(--no-backup)
+        fi
+
+        # Preserve dry-run mode
+        if [[ "$DRY_RUN" == true ]]; then
+            UPDATE_ARGS+=(--dry-run)
+        fi
+
+        # The confirmation was already handled globally.
+        UPDATE_ARGS+=(--force)
+
+        if "$SCRIPT_DIR/update.sh" \
+            "$TARGET_PLATFORM" \
+            "${UPDATE_ARGS[@]}"
+        then
+
+            SUCCESSFUL_PLATFORMS+=("$TARGET_PLATFORM")
+
+        else
+
+            FAILED_PLATFORMS+=("$TARGET_PLATFORM")
+
+            print_error "Platform update failed: $TARGET_PLATFORM"
+        fi
+
+    done
+
+    # -------------------------------------------------------------------------
+    # Final summary
+    # -------------------------------------------------------------------------
+
+    echo
+
+    print_header "All Platforms Update Summary"
+
+    if [[ ${#SUCCESSFUL_PLATFORMS[@]} -gt 0 ]]; then
+
+        print_success \
+            "${#SUCCESSFUL_PLATFORMS[@]} platform(s) completed successfully."
+
+        for TARGET_PLATFORM in "${SUCCESSFUL_PLATFORMS[@]}"; do
+            printf "  ✔  %s\n" "$TARGET_PLATFORM"
+        done
+
+    fi
+
+    if [[ ${#FAILED_PLATFORMS[@]} -gt 0 ]]; then
+
+        echo
+
+        print_error \
+            "${#FAILED_PLATFORMS[@]} platform(s) failed."
+
+        for TARGET_PLATFORM in "${FAILED_PLATFORMS[@]}"; do
+            printf "  ✘  %s\n" "$TARGET_PLATFORM"
+        done
+
+        exit 1
+    fi
+
+    echo
+
+    print_success "All platform updates completed successfully."
+
+    exit 0
+
+fi
+
 prepare_platform "$PLATFORM"
 
-print_header "Platform Update"
+print_header "Platform Update: $PLATFORM"
 
 echo "Platform : $PLATFORM"
 
@@ -107,6 +267,7 @@ if [[ "$DRY_RUN" == true ]]; then
 
     UPDATED_SERVICES=()
     UNCHANGED_SERVICES=()
+    BUILD_SERVICES=()
     UNKNOWN_SERVICES=()
 
     # Resolve the actual services to inspect
@@ -126,6 +287,11 @@ if [[ "$DRY_RUN" == true ]]; then
     for SVC in "${TARGET_SERVICES[@]}"; do
 
         [[ -n "$SVC" ]] || continue
+
+        if platform_service_has_build "$PLATFORM" "$SVC"; then
+            BUILD_SERVICES+=("$SVC")
+            continue
+        fi
 
         IMAGE="$(
             platform_cd "$PLATFORM" || exit 1
@@ -203,6 +369,21 @@ if [[ "$DRY_RUN" == true ]]; then
     fi
 
     ###############################################################################
+    # Build-based services
+    ###############################################################################
+
+    if [[ ${#BUILD_SERVICES[@]} -gt 0 ]]; then
+        print_header "Build-Based Services"
+
+        for SVC in "${BUILD_SERVICES[@]}"; do
+            printf "  "
+            printf "%-18s Requires local rebuild\n" "$SVC"
+        done
+
+        echo
+    fi
+
+    ###############################################################################
     # Unknown
     ###############################################################################
 
@@ -226,6 +407,8 @@ if [[ "$DRY_RUN" == true ]]; then
 
     if [[ ${#UPDATED_SERVICES[@]} -gt 0 ]]; then
         print_info "Updates are available for ${#UPDATED_SERVICES[@]} service(s)."
+    elif [[ ${#BUILD_SERVICES[@]} -gt 0 ]]; then
+        print_info "${#BUILD_SERVICES[@]} build-based service(s) require a local rebuild during update."
     else
         print_success "All checked services are already up-to-date."
     fi
@@ -349,7 +532,7 @@ done < <(
 for svc in "${UPDATED_SERVICES[@]}"
 do
     printf " "
-    printf "✔ %-18s Updated\n" "$svc"
+    printf "✔  %-18s Updated\n" "$svc"
 done
 
 for svc in "${UNCHANGED_SERVICES[@]}"
@@ -462,13 +645,11 @@ if [[ ${#UPDATED_SERVICES[@]} -gt 0 ]]; then
         case "$status" in
             healthy|no-healthcheck)
                 printf " "
-                print_success "✓"
-                printf " %-18s %s\n" "$svc" "Healthy"
+                printf "✔  %-18s %s\n" "$svc" "Healthy"
                 ;;
             *)
                 printf " "
-                print_error "✗"
-                printf " %-18s %s\n" "$svc" "$status"
+                printf "✘ %-18s %s\n" "$svc" "$status"
                 ;;
         esac
     done
